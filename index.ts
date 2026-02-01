@@ -50,6 +50,12 @@ const GEMINI_SESSIONS_DIR = join(HOME, ".gemini", "tmp");
 // Terminal configuration (env variable support)
 const TERMINAL = process.env.PIPELINE_TERMINAL || "ghostty";
 
+// Timeout configuration (adaptive timeout strategy)
+const TIMEOUT_BASE = 30 * 60 * 1000;        // 30 minutes base timeout per agent
+const TIMEOUT_EXTENSION = 15 * 60 * 1000;   // 15 minutes extension if agent is active
+const ACTIVITY_CHECK_INTERVAL = 2000;        // Check every 2 seconds
+const ACTIVITY_THRESHOLD = 60 * 1000;        // Consider active if output changed in last 60s
+
 // Request ID generator for completion detection
 function generateRequestId(): string {
   return `RQ-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -409,13 +415,16 @@ class TmuxAgent {
     await $`tmux send-keys -t ${this.sessionName} Enter`.quiet();
   }
 
-  // Wait for progress.jsonl to have a specific event
-  async waitForProgressEvent(agent: string, action: string, iteration: number, progressFile: string, timeoutMs: number = 300000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
+  // Wait for progress.jsonl to have a specific event (adaptive timeout)
+  async waitForProgressEvent(agent: string, action: string, iteration: number, progressFile: string): Promise<void> {
+    let deadline = Date.now() + TIMEOUT_BASE;
+    let lastPaneContent = "";
+    let lastActivityTime = Date.now();
 
     while (Date.now() < deadline) {
-      await Bun.sleep(2000);
+      await Bun.sleep(ACTIVITY_CHECK_INTERVAL);
 
+      // Check for completion first
       if (existsSync(progressFile)) {
         const content = readFileSync(progressFile, "utf-8");
         const lines = content.trim().split("\n").filter(l => l.trim());
@@ -427,17 +436,37 @@ class TmuxAgent {
           }
         }
       }
+
+      // Check if agent is still active (pane output changing)
+      try {
+        const currentPane = await this.capturePane(100);
+        if (currentPane !== lastPaneContent) {
+          lastPaneContent = currentPane;
+          lastActivityTime = Date.now();
+        }
+
+        // If agent is active and we're near deadline, extend it
+        const timeToDeadline = deadline - Date.now();
+        const timeSinceActivity = Date.now() - lastActivityTime;
+
+        if (timeToDeadline < TIMEOUT_EXTENSION && timeSinceActivity < ACTIVITY_THRESHOLD) {
+          deadline = Date.now() + TIMEOUT_EXTENSION;
+          console.error(`[${agent}] Still active, extending timeout by 15 minutes`);
+        }
+      } catch {}
     }
 
     throw new Error(`Timeout waiting for ${agent}/${action} in progress.jsonl`);
   }
 
-  // Wait for Codex to complete using session file
-  async waitForCodexCompletion(timeoutMs: number = 300000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
+  // Wait for Codex to complete using session file (adaptive timeout)
+  async waitForCodexCompletion(): Promise<void> {
+    let deadline = Date.now() + TIMEOUT_BASE;
+    let lastPaneContent = "";
+    let lastActivityTime = Date.now();
 
     while (Date.now() < deadline) {
-      await Bun.sleep(2000);
+      await Bun.sleep(ACTIVITY_CHECK_INTERVAL);
 
       const sessionFile = await this.findLatestCodexSession();
       if (sessionFile) {
@@ -446,6 +475,23 @@ class TmuxAgent {
           return;
         }
       }
+
+      // Check if agent is still active
+      try {
+        const currentPane = await this.capturePane(100);
+        if (currentPane !== lastPaneContent) {
+          lastPaneContent = currentPane;
+          lastActivityTime = Date.now();
+        }
+
+        const timeToDeadline = deadline - Date.now();
+        const timeSinceActivity = Date.now() - lastActivityTime;
+
+        if (timeToDeadline < TIMEOUT_EXTENSION && timeSinceActivity < ACTIVITY_THRESHOLD) {
+          deadline = Date.now() + TIMEOUT_EXTENSION;
+          console.error(`[codex] Still active, extending timeout by 15 minutes`);
+        }
+      } catch {}
     }
 
     throw new Error(`Timeout waiting for Codex completion`);
@@ -524,17 +570,36 @@ class TmuxAgent {
     return false;
   }
 
-  // Wait for Gemini to complete using session file
-  async waitForGeminiCompletion(timeoutMs: number = 300000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
+  // Wait for Gemini to complete using session file (adaptive timeout)
+  async waitForGeminiCompletion(): Promise<void> {
+    let deadline = Date.now() + TIMEOUT_BASE;
+    let lastPaneContent = "";
+    let lastActivityTime = Date.now();
 
     while (Date.now() < deadline) {
-      await Bun.sleep(2000);
+      await Bun.sleep(ACTIVITY_CHECK_INTERVAL);
 
       const completed = await this.checkGeminiSessionFile();
       if (completed) {
         return;
       }
+
+      // Check if agent is still active
+      try {
+        const currentPane = await this.capturePane(100);
+        if (currentPane !== lastPaneContent) {
+          lastPaneContent = currentPane;
+          lastActivityTime = Date.now();
+        }
+
+        const timeToDeadline = deadline - Date.now();
+        const timeSinceActivity = Date.now() - lastActivityTime;
+
+        if (timeToDeadline < TIMEOUT_EXTENSION && timeSinceActivity < ACTIVITY_THRESHOLD) {
+          deadline = Date.now() + TIMEOUT_EXTENSION;
+          console.error(`[gemini] Still active, extending timeout by 15 minutes`);
+        }
+      } catch {}
     }
 
     throw new Error(`Timeout waiting for Gemini completion`);
@@ -589,28 +654,31 @@ class TmuxAgent {
   }
 
   // Generic wait for completion - routes to the right method based on agent type
-  async waitForCompletion(timeoutMs: number = 300000): Promise<void> {
+  async waitForCompletion(): Promise<void> {
     switch (this.agentType) {
       case "claude":
-        return this.waitForClaudeCompletion(timeoutMs);
+        return this.waitForClaudeCompletion();
       case "gemini":
-        return this.waitForGeminiCompletion(timeoutMs);
+        return this.waitForGeminiCompletion();
       case "codex":
-        return this.waitForCodexCompletion(timeoutMs);
+        return this.waitForCodexCompletion();
     }
   }
 
-  // Wait for Claude to complete using pane
-  async waitForClaudeCompletion(timeoutMs: number = 300000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
+  // Wait for Claude to complete using pane (adaptive timeout)
+  async waitForClaudeCompletion(): Promise<void> {
+    let deadline = Date.now() + TIMEOUT_BASE;
+    let lastPaneContent = "";
+    let lastActivityTime = Date.now();
 
     while (Date.now() < deadline) {
-      await Bun.sleep(2000);
+      await Bun.sleep(ACTIVITY_CHECK_INTERVAL);
 
       try {
         const pane = await this.capturePane(50);
         const lastLines = pane.split("\n").slice(-20).join("\n");
 
+        // Check for completion
         if (lastLines.includes("Worked for") ||
             (lastLines.includes("❯") && !lastLines.includes("⏳") && !lastLines.includes("Running"))) {
           // Verify stability
@@ -620,6 +688,21 @@ class TmuxAgent {
           if (!newLastLines.includes("⏳") && !newLastLines.includes("Running")) {
             return;
           }
+        }
+
+        // Check if agent is still active
+        const currentPane = await this.capturePane(100);
+        if (currentPane !== lastPaneContent) {
+          lastPaneContent = currentPane;
+          lastActivityTime = Date.now();
+        }
+
+        const timeToDeadline = deadline - Date.now();
+        const timeSinceActivity = Date.now() - lastActivityTime;
+
+        if (timeToDeadline < TIMEOUT_EXTENSION && timeSinceActivity < ACTIVITY_THRESHOLD) {
+          deadline = Date.now() + TIMEOUT_EXTENSION;
+          console.error(`[claude] Still active, extending timeout by 15 minutes`);
         }
       } catch {}
     }
@@ -1365,7 +1448,7 @@ const tools: Tool[] = [
 ];
 
 const server = new Server(
-  { name: "gumploop", version: "2.2.0" }, // Bumped: Security fixes
+  { name: "gumploop", version: "2.3.0" }, // Bumped: Adaptive timeout (30min base + 15min extensions)
   { capabilities: { tools: {} } }
 );
 
