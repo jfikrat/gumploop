@@ -1,8 +1,8 @@
-# Gumploop MCP v2.3.0
+# Gumploop MCP v2.4.0
 
 > "Run Forrest Run!" - Multi-agent development pipeline with consensus-based planning.
 
-[![Version](https://img.shields.io/badge/version-2.3.0-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-2.4.0-blue.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-green.svg)]()
 
 ## Overview
@@ -143,6 +143,7 @@ gumploop/
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.4.0 | 2026-02-01 | Bug fixes: test phase, workDir, planningComplete |
 | 2.3.0 | 2026-02-01 | Adaptive timeout (30min + 15min extensions) |
 | 2.2.0 | 2026-02-01 | Security hardening, bug fixes |
 | 2.1.1 | 2026-01-30 | Initial release |

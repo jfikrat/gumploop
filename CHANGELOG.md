@@ -4,6 +4,20 @@ Tüm önemli değişiklikler bu dosyada belgelenir.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
+## [2.4.0] - 2026-02-01
+
+### Fixed
+- ISSUE-003: Test phase `waitForProgressEvent()` kullanıyor (önceki: `waitForCompletion()`)
+- ISSUE-004: workDir otomatik oluşturuluyor (dizin yoksa)
+- ISSUE-005: `planningComplete` consensus olmasa bile true oluyor
+
+### Changed
+- Test phase prompt: Tam dosya yolları ve progress marker eklendi
+- `getProjectDir()`: Dizin yoksa `mkdirSync()` ile oluşturuyor
+- `executePlanning()`: Max iterations sonrası her zaman `planningComplete = true`
+
+---
+
 ## [2.3.0] - 2026-02-01
 
 ### Added
@@ -63,6 +77,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 | Version | Date | Summary |
 |---------|------|---------|
+| 2.4.0 | 2026-02-01 | Bug fixes (ISSUE-003/004/005) |
 | 2.3.0 | 2026-02-01 | Adaptive timeout |
 | 2.2.0 | 2026-02-01 | Security hardening |
 | 2.1.1 | 2026-01-30 | Initial release |

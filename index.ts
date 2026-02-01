@@ -99,6 +99,17 @@ function validateWorkDir(workDir: string): { valid: boolean; error?: string; res
 
 function getProjectDir(workDir?: string): string {
   if (workDir) {
+    // ISSUE-004 Fix: Create directory if it doesn't exist (before validation)
+    const resolved = resolve(workDir);
+    if (!existsSync(resolved)) {
+      try {
+        mkdirSync(resolved, { recursive: true });
+        console.error(`Created workDir: ${resolved}`);
+      } catch (err) {
+        console.error(`Failed to create workDir "${resolved}": ${err}`);
+      }
+    }
+
     const validation = validateWorkDir(workDir);
     if (validation.valid && validation.resolved) {
       return validation.resolved;
@@ -1000,9 +1011,9 @@ Include:
     await codex.stop();
     state.activeSessions = [];
 
-    if (consensusReached) {
-      state.planningComplete = true;
-    }
+    // ISSUE-005 Fix: Always mark planning as complete after max iterations
+    // This allows the user to continue to coding phase even without consensus
+    state.planningComplete = true;
 
     saveState(state);
     return { success: consensusReached, result: results.join("\n") };
@@ -1164,21 +1175,34 @@ async function executeTesting(): Promise<{ success: boolean; result: string }> {
     saveState(state);
 
     const testerPrompt = `# Instructions
-1. Read the code in the project
+You are testing the code in ${projectDir}
+
+## Steps
+1. Read the existing code files in the project
 2. Create comprehensive tests in a .test.ts file
 3. Run: bun test
-4. Write results to .gumploop/test-results.md
+4. Write results to: ${files.testResultsFile}
 
-Include in test-results.md:
+## Required Output Format for ${files.testResultsFile}:
+\`\`\`markdown
 ## Test Results
-- Tests run
-- Output
+- Tests run: [number]
+- Passed: [number]
+- Failed: [number]
+
+## Output
+[test output here]
 
 ## Status
-TESTS_PASS (all pass) or TESTS_FAIL (with failures)`;
+TESTS_PASS or TESTS_FAIL
+\`\`\`
+
+## CRITICAL - COMPLETION SIGNAL
+After writing test-results.md, you MUST append this exact JSON line to ${files.progressFile}:
+{"agent": "claude", "action": "testing_complete", "iteration": 1}`;
 
     await tester.sendMessage(testerPrompt);
-    await tester.waitForCompletion();
+    await tester.waitForProgressEvent("claude", "testing_complete", 1, files.progressFile);
     results.push("Tester done.");
 
     await Bun.sleep(3000);

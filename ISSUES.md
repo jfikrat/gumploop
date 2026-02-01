@@ -35,7 +35,7 @@ await Bun.sleep(1000);
 ---
 
 ### ISSUE-003: Test Phase - test-results.md Yazılmıyor
-**Durum:** Açık
+**Durum:** Çözüm Uygulandı (Test Bekliyor)
 **Öncelik:** P1 - Önemli
 **Tarih:** 2026-02-01
 
@@ -45,15 +45,78 @@ await Bun.sleep(1000);
 - Ama `.gumploop/test-results.md` dosyası oluşturulmuyor
 - Test sonucu her zaman "failed" dönüyor
 
-**Olası Nedenler:**
-1. Claude tester prompt'u takip etmiyor
-2. Dosya yolu yanlış
-3. Agent farklı bir yere yazıyor
+**Kök Neden:**
+- `waitForCompletion()` agent'ın gerçekten işi bitirmesini beklemiyor
+- Prompt'ta tam dosya yolları yok
+- Progress marker yok
 
-**Araştırma:**
-- [ ] Tester prompt'unu kontrol et
-- [ ] Claude'un çıktısına bak
-- [ ] Alternatif completion detection
+**Uygulanan Çözüm:**
+```typescript
+// Eski
+await tester.waitForCompletion();
+
+// Yeni
+await tester.waitForProgressEvent("claude", "testing_complete", 1, files.progressFile);
+```
+
+- Prompt güncellendi: tam dosya yolları eklendi
+- Progress marker eklendi: `{"agent": "claude", "action": "testing_complete", ...}`
+- `waitForProgressEvent()` kullanılıyor
+
+**Test:**
+- [ ] MCP sunucusu restart edilmeli (yeni kod yüklenmedi)
+- [ ] Test phase tekrar çalıştırılmalı
+
+---
+
+### ISSUE-004: workDir Parametresi Ignore Ediliyor
+**Durum:** Çözüldü
+**Öncelik:** P1 - Önemli
+**Tarih:** 2026-02-01
+**Çözüm Tarihi:** 2026-02-01
+
+**Belirtiler:**
+- `mcp__gumploop__plan` çağrılırken `workDir` parametresi veriliyor
+- Ama pipeline `/tmp/collab-mcp/project` kullanıyor
+- Kullanıcının belirttiği dizin ignore ediliyor
+
+**Kök Neden:**
+- `validateWorkDir()` dizinin var olmasını gerektiriyor
+- Dizin yoksa validation başarısız → default kullanılıyor
+- Hata mesajı MCP çıktısında görünmüyor
+
+**Çözüm:**
+```typescript
+// getProjectDir() içinde - dizin yoksa oluştur
+if (!existsSync(resolved)) {
+  mkdirSync(resolved, { recursive: true });
+}
+```
+
+---
+
+### ISSUE-005: Consensus Olmayınca planningComplete Flag Set Edilmiyor
+**Durum:** Çözüldü
+**Öncelik:** P2 - Orta
+**Tarih:** 2026-02-01
+**Çözüm Tarihi:** 2026-02-01
+
+**Belirtiler:**
+- Planning phase tamamlanıyor (plan.md, review dosyaları var)
+- Ama `planningComplete: false` kalıyor
+- Coding phase başlamıyor: "Planning not complete"
+
+**Kök Neden:**
+- Max iterations'a ulaşıldığında consensus yoksa flag set edilmiyor
+- Sadece consensus olduğunda `planningComplete = true` yapılıyor
+
+**Çözüm:**
+```typescript
+// executePlanning() sonunda - her durumda planningComplete = true
+state.planningComplete = true;  // Consensus olsun olmasın
+```
+
+Kullanıcı consensus olmasa bile coding phase'a devam edebilir.
 
 ---
 
