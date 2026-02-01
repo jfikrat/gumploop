@@ -1,0 +1,12 @@
+{
+  "name": "gumploop",
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "bun build index.ts --outdir dist --target node",
+    "start": "bun run dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}
