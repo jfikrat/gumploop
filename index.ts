@@ -346,19 +346,25 @@ class TmuxAgent {
     });
     this.terminalProc.unref(); // Fix 6: Prevent orphan on crash
 
+    // ISSUE-001 Fix: Wait for tmux session to be created (race condition)
+    // spawn() is async, session may not exist immediately
+    await Bun.sleep(1000);
+
     // Wait for prompt box to appear - poll frequently
     const readyIndicators = this.getReadyIndicators();
+
     for (let i = 0; i < 60; i++) {
       await Bun.sleep(500);
       try {
         const pane = await this.capturePane(50);
         for (const indicator of readyIndicators) {
           if (pane.includes(indicator)) {
-            // Found prompt - ready to send
-            return;
+            return; // Found prompt - ready to send
           }
         }
-      } catch {}
+      } catch {
+        // Session may not exist yet, continue polling
+      }
     }
   }
 
