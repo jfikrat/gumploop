@@ -34,6 +34,29 @@ await Bun.sleep(1000);
 
 ---
 
+### ISSUE-003: Test Phase - test-results.md Yazılmıyor
+**Durum:** Açık
+**Öncelik:** P1 - Önemli
+**Tarih:** 2026-02-01
+
+**Belirtiler:**
+- `mcp__gumploop__test` çalışıyor
+- Agent testi tamamlıyor (Tester done)
+- Ama `.gumploop/test-results.md` dosyası oluşturulmuyor
+- Test sonucu her zaman "failed" dönüyor
+
+**Olası Nedenler:**
+1. Claude tester prompt'u takip etmiyor
+2. Dosya yolu yanlış
+3. Agent farklı bir yere yazıyor
+
+**Araştırma:**
+- [ ] Tester prompt'unu kontrol et
+- [ ] Claude'un çıktısına bak
+- [ ] Alternatif completion detection
+
+---
+
 ### ISSUE-002: Planning Phase Progress.jsonl Timeout
 **Durum:** Kısmen Çözüldü
 **Öncelik:** P1 - Önemli
