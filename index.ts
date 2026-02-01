@@ -1129,8 +1129,10 @@ CODE_APPROVED (if code is good) or NEEDS_REVISION (with specific issues)`;
     await reviewer.stop();
     state.activeSessions = [];
 
+    // ISSUE-005 Fix (coding): Always mark complete after max iterations
+    state.codingComplete = true;
+
     if (codeApproved) {
-      state.codingComplete = true;
       results.push("\n✅ **Code approved!**");
     } else {
       results.push("\n❌ **Max iterations reached without approval**");

@@ -35,7 +35,8 @@ await Bun.sleep(1000);
 ---
 
 ### ISSUE-003: Test Phase - test-results.md Yazılmıyor
-**Durum:** Çözüm Uygulandı (Test Bekliyor)
+**Durum:** Çözüldü
+**Çözüm Tarihi:** 2026-02-01
 **Öncelik:** P1 - Önemli
 **Tarih:** 2026-02-01
 
@@ -64,8 +65,8 @@ await tester.waitForProgressEvent("claude", "testing_complete", 1, files.progres
 - `waitForProgressEvent()` kullanılıyor
 
 **Test:**
-- [ ] MCP sunucusu restart edilmeli (yeni kod yüklenmedi)
-- [ ] Test phase tekrar çalıştırılmalı
+- [x] MCP sunucusu restart edildi
+- [x] Test phase çalıştırıldı: 21 test, hepsi geçti
 
 ---
 
@@ -112,11 +113,14 @@ if (!existsSync(resolved)) {
 
 **Çözüm:**
 ```typescript
-// executePlanning() sonunda - her durumda planningComplete = true
+// executePlanning() sonunda
 state.planningComplete = true;  // Consensus olsun olmasın
+
+// executeCoding() sonunda
+state.codingComplete = true;    // Approval olsun olmasın
 ```
 
-Kullanıcı consensus olmasa bile coding phase'a devam edebilir.
+Kullanıcı consensus/approval olmasa bile sonraki phase'a devam edebilir.
 
 ---
 
