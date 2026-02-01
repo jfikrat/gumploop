@@ -46,6 +46,7 @@ const DEFAULT_PROJECT_DIR = join(DEFAULT_BASE_DIR, "project");
 const STATE_FILE = join(DEFAULT_BASE_DIR, ".state.json");
 const CODEX_SESSIONS_DIR = join(HOME, ".codex", "sessions");
 const GEMINI_SESSIONS_DIR = join(HOME, ".gemini", "tmp");
+const CLAUDE_PROJECTS_DIR = join(HOME, ".claude", "projects");
 
 // Terminal configuration (env variable support)
 const TERMINAL = process.env.PIPELINE_TERMINAL || "ghostty";
@@ -377,6 +378,9 @@ class TmuxAgent {
         // Session may not exist yet, continue polling
       }
     }
+
+    // Prompt not detected but agent may have started - log and proceed
+    console.error(`[${this.agentType}] Prompt not detected after 30s, proceeding anyway`);
   }
 
   private getReadyIndicators(): string[] {
@@ -566,21 +570,13 @@ class TmuxAgent {
         const ts = new Date(event.timestamp).getTime();
         if (ts < this.messageStartTime) continue;
 
-        // Primary: Check agent_message event (more reliable than token_count)
+        // ONLY check for ANS marker - no fallbacks
         if (event.type === "event_msg" && event.payload?.type === "agent_message") {
           const msg = event.payload.message || "";
-          // Request ID verification (if available)
           if (this.currentRequestId) {
             const ansId = this.currentRequestId.replace("RQ-", "ANS-");
             if (msg.includes(`[${ansId}]`)) return true;
           }
-          // Fallback: agent_message presence indicates completion
-          return true;
-        }
-
-        // Secondary: token_count as fallback
-        if (event.type === "event_msg" && event.payload?.type === "token_count") {
-          return true;
         }
       }
     } catch {}
@@ -646,21 +642,16 @@ class TmuxAgent {
           if (!data) continue;
           const messages = data.messages || [];
 
-          // Find gemini message with completion markers
+          // Find gemini message with ANS marker - no fallbacks
           for (let i = messages.length - 1; i >= 0; i--) {
             const msg = messages[i];
             if (msg.type === "gemini") {
               const content = msg.content || "";
 
-              // Primary: Check for ANS marker (request ID based)
+              // ONLY check for ANS marker (request ID based)
               if (this.currentRequestId) {
                 const ansId = this.currentRequestId.replace("RQ-", "ANS-");
                 if (content.includes(`[${ansId}]`)) return true;
-              }
-
-              // Secondary: Check for ◆END◆ marker (fallback)
-              if (content.includes("◆END◆")) {
-                return true;
               }
             }
           }
@@ -672,6 +663,11 @@ class TmuxAgent {
 
   // Generic wait for completion - routes to the right method based on agent type
   async waitForCompletion(): Promise<void> {
+    // Request ID is required for reliable completion detection
+    if (!this.currentRequestId) {
+      throw new Error(`[${this.agentType}] Cannot wait for completion without request ID`);
+    }
+
     switch (this.agentType) {
       case "claude":
         return this.waitForClaudeCompletion();
@@ -682,7 +678,66 @@ class TmuxAgent {
     }
   }
 
-  // Wait for Claude to complete using pane (adaptive timeout)
+  // Check Claude session file for ANS marker
+  private async checkClaudeSessionFile(): Promise<boolean> {
+    try {
+      // Claude projects dir: ~/.claude/projects/{project-hash}/*.jsonl
+      // Project hash is derived from working directory
+      const projectHash = this.projectDir.replace(/\//g, "-").replace(/^-/, "");
+      const projectSessionDir = join(CLAUDE_PROJECTS_DIR, projectHash);
+
+      if (!existsSync(projectSessionDir)) return false;
+
+      const files = await readdir(projectSessionDir);
+      const jsonlFiles = files.filter(f => f.endsWith(".jsonl")).map(f => join(projectSessionDir, f));
+
+      // Find most recently modified file
+      const withStats = await Promise.all(
+        jsonlFiles.map(async f => {
+          try {
+            const s = await stat(f);
+            return { path: f, mtime: s.mtimeMs };
+          } catch { return null; }
+        })
+      );
+
+      const valid = withStats.filter((x): x is { path: string; mtime: number } => x !== null);
+      valid.sort((a, b) => b.mtime - a.mtime);
+
+      // Check the most recent file
+      for (const { path, mtime } of valid) {
+        if (mtime < this.messageStartTime) continue;
+
+        const content = await readFile(path, "utf-8");
+        const lines = content.trim().split("\n");
+
+        // Check from end for faster detection
+        interface ClaudeEvent {
+          type: string;
+          message?: { content?: Array<{ type: string; text?: string }> };
+        }
+        for (const line of lines.reverse()) {
+          const event = safeJsonParse<ClaudeEvent>(line);
+          if (!event) continue;
+
+          // Look for assistant message with ANS marker
+          if (event.type === "assistant" && event.message?.content) {
+            for (const block of event.message.content) {
+              if (block.type === "text" && block.text) {
+                if (this.currentRequestId) {
+                  const ansId = this.currentRequestId.replace("RQ-", "ANS-");
+                  if (block.text.includes(`[${ansId}]`)) return true;
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch {}
+    return false;
+  }
+
+  // Wait for Claude to complete using session file + pane fallback (adaptive timeout)
   async waitForClaudeCompletion(): Promise<void> {
     let deadline = Date.now() + TIMEOUT_BASE;
     let lastPaneContent = "";
@@ -692,10 +747,16 @@ class TmuxAgent {
       await Bun.sleep(ACTIVITY_CHECK_INTERVAL);
 
       try {
+        // Primary: Check session file for ANS marker
+        const sessionComplete = await this.checkClaudeSessionFile();
+        if (sessionComplete) {
+          return;
+        }
+
+        // Fallback: Check pane for "Worked for" (legacy detection)
         const pane = await this.capturePane(50);
         const lastLines = pane.split("\n").slice(-20).join("\n");
 
-        // Check for completion
         if (lastLines.includes("Worked for") ||
             (lastLines.includes("❯") && !lastLines.includes("⏳") && !lastLines.includes("Running"))) {
           // Verify stability
@@ -723,6 +784,12 @@ class TmuxAgent {
         }
       } catch {}
     }
+
+    // Log pane content for debugging before timeout
+    try {
+      const finalPane = await this.capturePane(100);
+      console.error(`[claude] Timeout - last pane content:\n${finalPane.slice(-500)}`);
+    } catch {}
 
     throw new Error(`Timeout waiting for Claude completion`);
   }
@@ -1480,7 +1547,7 @@ const tools: Tool[] = [
 ];
 
 const server = new Server(
-  { name: "gumploop", version: "2.3.0" }, // Bumped: Adaptive timeout (30min base + 15min extensions)
+  { name: "gumploop", version: "2.5.0" }, // Parsing & Startup improvements: ANS-only detection, session file support
   { capabilities: { tools: {} } }
 );
 
@@ -1570,3 +1637,19 @@ async function main() {
 }
 
 main().catch(console.error);
+
+// Export for testing
+export {
+  generateRequestId,
+  sanitizeSessionName,
+  validateWorkDir,
+  safeJsonParse,
+  isValidState,
+  defaultState,
+  getProjectDir,
+  getPipelineDir,
+  getPipelineFiles,
+  TmuxAgent,
+  type PipelineState,
+  type AgentType,
+};
