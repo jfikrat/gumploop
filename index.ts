@@ -130,6 +130,7 @@ function getPipelineFiles(projectDir: string) {
   return {
     pipelineDir,
     gumploopDir: pipelineDir, // Fix 1: Add gumploopDir alias
+    stateFile: join(pipelineDir, ".state.json"), // Project-isolated state
     planFile: join(pipelineDir, "plan.md"),
     reviewGeminiFile: join(pipelineDir, "review-gemini.md"),
     reviewCodexFile: join(pipelineDir, "review-codex.md"),
@@ -222,13 +223,35 @@ function defaultState(): PipelineState {
   };
 }
 
-function loadState(): PipelineState {
+// Get state file path for a project (or global fallback)
+function getStateFile(workDir?: string): string {
+  if (workDir) {
+    return join(getPipelineDir(workDir), ".state.json");
+  }
+  return STATE_FILE; // Global fallback for backwards compat
+}
+
+function loadState(workDir?: string): PipelineState {
+  // Try project-specific state first
+  if (workDir) {
+    const projectStateFile = getStateFile(workDir);
+    if (existsSync(projectStateFile)) {
+      try {
+        const raw = readFileSync(projectStateFile, "utf-8");
+        const state = safeJsonParse<PipelineState>(raw);
+        if (state && isValidState(state)) {
+          return { ...state, workDir: state.workDir || workDir };
+        }
+      } catch {}
+    }
+  }
+
+  // Fallback to global state (backwards compat)
   if (existsSync(STATE_FILE)) {
     try {
       const raw = readFileSync(STATE_FILE, "utf-8");
       const state = safeJsonParse<PipelineState>(raw);
       if (state && isValidState(state)) {
-        // Ensure workDir exists (for backwards compatibility)
         return { ...state, workDir: state.workDir || DEFAULT_PROJECT_DIR };
       }
       console.error("Invalid state shape, resetting.");
@@ -241,7 +264,11 @@ function loadState(): PipelineState {
 
 function saveState(state: PipelineState): void {
   state.lastUpdate = new Date().toISOString();
-  writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  const stateFile = getStateFile(state.workDir);
+  // Ensure directory exists
+  const stateDir = getPipelineDir(state.workDir);
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(stateFile, JSON.stringify(state, null, 2));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -312,6 +339,16 @@ function sanitizeSessionName(name: string): string {
   return name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 50);
 }
 
+// Generate short hash from workDir for session isolation
+function getWorkDirHash(workDir: string): string {
+  let hash = 0;
+  for (let i = 0; i < workDir.length; i++) {
+    hash = ((hash << 5) - hash) + workDir.charCodeAt(i);
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return Math.abs(hash).toString(36).slice(0, 6);
+}
+
 class TmuxAgent {
   private sessionName: string;
   private agentType: AgentType;
@@ -321,7 +358,8 @@ class TmuxAgent {
   private terminalProc: ReturnType<typeof spawn> | null = null; // Fix 6: Track process
 
   constructor(name: string, type: AgentType, projectDir: string) {
-    this.sessionName = sanitizeSessionName(`pipeline-${name}`); // Fix 4
+    const hash = getWorkDirHash(projectDir);
+    this.sessionName = sanitizeSessionName(`gumploop-${hash}-${type}`);
     this.agentType = type;
     this.projectDir = projectDir;
   }
@@ -823,7 +861,7 @@ async function executePlanning(task: string, maxIterations: number, workDir?: st
   mkdirSync(projectDir, { recursive: true });
   mkdirSync(files.gumploopDir, { recursive: true });
 
-  const state = loadState();
+  const state = loadState(projectDir);
   state.currentPhase = "planning";
   state.task = task;
   state.workDir = projectDir;
@@ -1547,7 +1585,7 @@ const tools: Tool[] = [
 ];
 
 const server = new Server(
-  { name: "gumploop", version: "2.5.0" }, // Parsing & Startup improvements: ANS-only detection, session file support
+  { name: "gumploop", version: "2.6.0" }, // Project isolation: unique session names, per-project state
   { capabilities: { tools: {} } }
 );
 
@@ -1649,6 +1687,8 @@ export {
   getProjectDir,
   getPipelineDir,
   getPipelineFiles,
+  getWorkDirHash,
+  getStateFile,
   TmuxAgent,
   type PipelineState,
   type AgentType,

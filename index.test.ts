@@ -1,5 +1,5 @@
 /**
- * Gumploop MCP v2.5.0 Tests
+ * Gumploop MCP v2.6.0 Tests
  *
  * Tests for:
  * - Request ID generation and ANS marker
@@ -8,6 +8,7 @@
  * - Safe JSON parsing
  * - State validation
  * - Pipeline file structure
+ * - Project isolation (session names, state files)
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
@@ -25,6 +26,8 @@ import {
   getProjectDir,
   getPipelineDir,
   getPipelineFiles,
+  getWorkDirHash,
+  getStateFile,
   type PipelineState,
 } from "./index";
 
@@ -422,5 +425,71 @@ describe("Progress File Format", () => {
       }
     }
     expect(found).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project Isolation Tests (v2.6.0)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("getWorkDirHash", () => {
+  test("generates consistent hash for same path", () => {
+    const hash1 = getWorkDirHash("/home/user/project1");
+    const hash2 = getWorkDirHash("/home/user/project1");
+    expect(hash1).toBe(hash2);
+  });
+
+  test("generates different hashes for different paths", () => {
+    const hash1 = getWorkDirHash("/home/user/project1");
+    const hash2 = getWorkDirHash("/home/user/project2");
+    expect(hash1).not.toBe(hash2);
+  });
+
+  test("generates 6-char alphanumeric hash", () => {
+    const hash = getWorkDirHash("/some/random/path");
+    expect(hash.length).toBeLessThanOrEqual(6);
+    expect(hash).toMatch(/^[a-z0-9]+$/);
+  });
+
+  test("handles empty string", () => {
+    const hash = getWorkDirHash("");
+    expect(hash).toBe("0");
+  });
+});
+
+describe("getStateFile", () => {
+  test("returns project-specific state file when workDir provided", () => {
+    const stateFile = getStateFile("/home/user/myproject");
+    expect(stateFile).toBe("/home/user/myproject/.gumploop/.state.json");
+  });
+
+  test("returns global state file when no workDir", () => {
+    const stateFile = getStateFile();
+    expect(stateFile).toBe("/tmp/collab-mcp/.state.json");
+  });
+
+  test("returns global state file for undefined", () => {
+    const stateFile = getStateFile(undefined);
+    expect(stateFile).toBe("/tmp/collab-mcp/.state.json");
+  });
+});
+
+describe("Session Name Isolation", () => {
+  test("different projects get different session names", () => {
+    const hash1 = getWorkDirHash("/project/a");
+    const hash2 = getWorkDirHash("/project/b");
+
+    const session1 = `gumploop-${hash1}-claude`;
+    const session2 = `gumploop-${hash2}-claude`;
+
+    expect(session1).not.toBe(session2);
+  });
+
+  test("session name follows new format", () => {
+    const hash = getWorkDirHash("/my/project");
+    const sessionName = `gumploop-${hash}-claude`;
+
+    expect(sessionName).toMatch(/^gumploop-[a-z0-9]+-claude$/);
+    expect(sessionName).not.toContain("pipeline");
   });
 });
