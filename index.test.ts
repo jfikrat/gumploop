@@ -29,7 +29,7 @@ import {
   getWorkDirHash,
   getStateFile,
   type PipelineState,
-} from "./index";
+} from "./src/index";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Request ID Tests
