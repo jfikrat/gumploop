@@ -91,11 +91,17 @@ export function loadState(workDir?: string): PipelineState {
   return defaultState();
 }
 
-/** Save pipeline state to disk. */
+/** Save pipeline state to disk. Also updates global state for cross-phase continuity. */
 export function saveState(state: PipelineState): void {
   state.lastUpdate = new Date().toISOString();
+  const stateJson = JSON.stringify(state, null, 2);
+
+  // Save to project-specific location
   const stateFile = getStateFile(state.workDir);
   const stateDir = getPipelineDir(state.workDir);
   mkdirSync(stateDir, { recursive: true });
-  writeFileSync(stateFile, JSON.stringify(state, null, 2));
+  writeFileSync(stateFile, stateJson);
+
+  // Also save to global state for phases that don't receive workDir parameter
+  writeFileSync(STATE_FILE, stateJson);
 }

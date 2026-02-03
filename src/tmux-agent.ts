@@ -67,12 +67,9 @@ export class TmuxAgent {
 
     const cliArgs = this.getCliArgs();
 
-    // Switch to target workspace first, then spawn window there
-    await $`i3-msg workspace ${targetWorkspace}`.quiet();
-
-    // Use tmux -c for safe directory change, pass args directly
+    // Spawn terminal with title for i3 identification
     this.terminalProc = spawn([
-      TERMINAL, "-e", "tmux", "new-session",
+      TERMINAL, "-title", this.sessionName, "-e", "tmux", "new-session",
       "-s", this.sessionName,
       "-c", this.projectDir,
       ...cliArgs
@@ -82,8 +79,9 @@ export class TmuxAgent {
     });
     this.terminalProc.unref(); // Prevent orphan on crash
 
-    // Wait for tmux session to be created (race condition fix)
+    // Wait for window to appear, then move to target workspace
     await Bun.sleep(1000);
+    await $`i3-msg '[title="${this.sessionName}"] move to workspace ${targetWorkspace}'`.quiet();
 
     // Wait for prompt box to appear - poll frequently
     const readyIndicators = this.getReadyIndicators();
@@ -158,14 +156,25 @@ export class TmuxAgent {
     writeFileSync(tmpFile, safeMessage, { mode: 0o600, flag: "wx" });
 
     await $`tmux delete-buffer -b ${bufferName} 2>/dev/null || true`.quiet();
-    await $`tmux load-buffer -b ${bufferName} ${tmpFile}`.quiet();
-    await $`tmux paste-buffer -t ${this.sessionName} -b ${bufferName} -p`.quiet();
+
+    const loadResult = await $`tmux load-buffer -b ${bufferName} ${tmpFile}`.quiet().nothrow();
+    if (loadResult.exitCode !== 0) {
+      console.error(`[${this.agentType}] tmux load-buffer failed: ${loadResult.stderr}`);
+    }
+
+    const pasteResult = await $`tmux paste-buffer -t ${this.sessionName} -b ${bufferName} -p`.quiet().nothrow();
+    if (pasteResult.exitCode !== 0) {
+      console.error(`[${this.agentType}] tmux paste-buffer failed for session ${this.sessionName}: ${pasteResult.stderr}`);
+    }
 
     // Clean up temp directory
     rmSync(tmpDir, { recursive: true, force: true });
 
     await Bun.sleep(300);
-    await $`tmux send-keys -t ${this.sessionName} Enter`.quiet();
+    const enterResult = await $`tmux send-keys -t ${this.sessionName} Enter`.quiet().nothrow();
+    if (enterResult.exitCode !== 0) {
+      console.error(`[${this.agentType}] tmux send-keys failed: ${enterResult.stderr}`);
+    }
   }
 
   /**

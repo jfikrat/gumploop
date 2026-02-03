@@ -240,8 +240,8 @@ export async function checkClaudeSessionFile(
 ): Promise<boolean> {
   try {
     // Claude projects dir: ~/.claude/projects/{project-hash}/*.jsonl
-    // Project hash is derived from working directory
-    const projectHash = projectDir.replace(/\//g, "-").replace(/^-/, "");
+    // Project hash is derived from working directory (keep leading dash)
+    const projectHash = projectDir.replace(/\//g, "-");
     const projectSessionDir = join(CLAUDE_PROJECTS_DIR, projectHash);
 
     if (!existsSync(projectSessionDir)) return false;
