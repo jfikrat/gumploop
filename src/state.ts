@@ -24,6 +24,9 @@ export function isValidState(obj: unknown): obj is PipelineState {
     (state.currentPhase === null || typeof state.currentPhase === "string") &&
     typeof state.task === "string" &&
     typeof state.iteration === "number" &&
+    // discoveryComplete is optional for backwards compat
+    (state.discoveryComplete === undefined || typeof state.discoveryComplete === "boolean") &&
+    (state.selectedFeature === undefined || state.selectedFeature === null || typeof state.selectedFeature === "string") &&
     typeof state.planningComplete === "boolean" &&
     typeof state.codingComplete === "boolean" &&
     typeof state.testingComplete === "boolean" &&
@@ -39,6 +42,8 @@ export function defaultState(): PipelineState {
     task: "",
     workDir: DEFAULT_PROJECT_DIR,
     iteration: 0,
+    discoveryComplete: false,
+    selectedFeature: null,
     planningComplete: false,
     codingComplete: false,
     testingComplete: false,

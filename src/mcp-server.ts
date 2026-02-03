@@ -15,9 +15,19 @@ import { mkdirSync, existsSync } from "fs";
 import { loadState, saveState } from "./state";
 import { getProjectDir, getPipelineDir } from "./workdir";
 import { STATE_FILE } from "./constants";
+import { executeDiscovery } from "./phases/discovery";
 import { executePlanning } from "./phases/planning";
 import { executeCoding } from "./phases/coding";
 import { executeTesting, executeDebugging } from "./phases/testing";
+
+// Canvas visualization
+import {
+  allTools as canvasAllTools,
+  handleCanvasTool,
+  handlePipelineTool,
+  broadcaster,
+  stateManager,
+} from "./canvas";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -40,6 +50,9 @@ function getStatus(): string {
   const state = loadState();
   const projectDir = state.workDir;
   const pipelineDir = getPipelineDir(projectDir);
+  // Discovery files
+  const consensusExists = existsSync(`${pipelineDir}/consensus.md`);
+  // Planning files
   const planExists = existsSync(`${pipelineDir}/plan.md`);
   const geminiReviewExists = existsSync(`${pipelineDir}/review-gemini.md`);
   const codexReviewExists = existsSync(`${pipelineDir}/review-codex.md`);
@@ -54,12 +67,14 @@ function getStatus(): string {
 **Last Update:** ${state.lastUpdate}
 
 ### Phase Status
+- Discovery: ${state.discoveryComplete ? "✅ Complete" : "⏳ Pending"}${state.selectedFeature ? ` (Selected: ${state.selectedFeature})` : ""}
 - Planning: ${state.planningComplete ? "✅ Complete" : "⏳ Pending"}
 - Coding: ${state.codingComplete ? "✅ Complete" : "⏳ Pending"}
 - Testing: ${state.testingComplete ? "✅ Passed" : "⏳ Pending"}
 - Debugging: ${state.debuggingComplete ? "✅ Fixed" : "⏳ Pending"}
 
 ### Pipeline Files
+- consensus.md: ${consensusExists ? "✓ exists" : "✗ missing"}
 - plan.md: ${planExists ? "✓ exists" : "✗ missing"}
 - review-gemini.md: ${geminiReviewExists ? "✓ exists" : "✗ missing"}
 - review-codex.md: ${codexReviewExists ? "✓ exists" : "✗ missing"}
@@ -72,6 +87,21 @@ function getStatus(): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const tools: Tool[] = [
+  {
+    name: "discover",
+    description: "Start feature discovery phase. Agents autonomously analyze the codebase and propose new features. Returns prioritized feature list.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workDir: {
+          type: "string",
+          description: "Working directory to analyze. Agents will explore this codebase and propose features.",
+        },
+        maxIterations: { type: "number", description: "Maximum discovery iterations (default: 3)", default: 3 },
+      },
+      required: ["workDir"],
+    },
+  },
   {
     name: "plan",
     description: "Start planning phase with Claude + Gemini + Codex consensus. Returns when all agents approve or max iterations reached.",
@@ -131,7 +161,30 @@ export const tools: Tool[] = [
     description: "Reset entire pipeline state and clear .gumploop directory.",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "canvas_server_start",
+    description: "Start WebSocket server for real-time canvas updates. Clients connect via ws://localhost:19800/ws?workDir=/path",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number", description: "WebSocket server port (default: 19800)" },
+      },
+    },
+  },
+  {
+    name: "canvas_server_stop",
+    description: "Stop WebSocket server for canvas updates",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "canvas_server_status",
+    description: "Get WebSocket server status and connected clients",
+    inputSchema: { type: "object", properties: {} },
+  },
 ];
+
+// Combine with canvas tools
+const allTools: Tool[] = [...tools, ...canvasAllTools];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Argument Parsers
@@ -156,17 +209,25 @@ function parseIterationsArg(args: unknown, defaultValue: number): number {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const server = new Server(
-  { name: "gumploop", version: "2.6.0" },
+  { name: "gumploop", version: "2.8.0" },
   { capabilities: { tools: {} } }
 );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: allTools }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
     switch (name) {
+      case "discover": {
+        const obj = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+        const workDir = typeof obj.workDir === "string" ? obj.workDir : undefined;
+        const maxIterations = typeof obj.maxIterations === "number" ? obj.maxIterations : 3;
+        if (!workDir) throw new Error("workDir parameter is required");
+        const result = await executeDiscovery(maxIterations, workDir);
+        return { content: [{ type: "text", text: result.result }] };
+      }
       case "plan": {
         const { task, workDir, maxIterations } = parsePlanArgs(args);
         if (!task) throw new Error("task parameter is required");
@@ -202,8 +263,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         mkdirSync(pipelineDir, { recursive: true });
         return { content: [{ type: "text", text: `Pipeline reset complete. Cleared: ${pipelineDir}` }] };
       }
-      default:
+      // Canvas WebSocket server tools
+      case "canvas_server_start": {
+        const obj = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+        const port = typeof obj.port === "number" ? obj.port : 19800;
+        if (broadcaster.isRunning()) {
+          return { content: [{ type: "text", text: "WebSocket server already running" }] };
+        }
+        // Wire up state manager to broadcaster
+        stateManager.setOnStateChange((workDir, state) => {
+          broadcaster.broadcastToTenant(workDir, state);
+        });
+        broadcaster.start();
+        return { content: [{ type: "text", text: `Canvas WebSocket server started on port ${port}` }] };
+      }
+      case "canvas_server_stop": {
+        broadcaster.stop();
+        return { content: [{ type: "text", text: "Canvas WebSocket server stopped" }] };
+      }
+      case "canvas_server_status": {
+        const running = broadcaster.isRunning();
+        const tenants = broadcaster.getTenants();
+        const count = broadcaster.getConnectionCount();
+        return {
+          content: [{
+            type: "text",
+            text: `WebSocket Server: ${running ? "Running" : "Stopped"}\nConnections: ${count}\nTenants: ${tenants.length > 0 ? tenants.join(", ") : "None"}`,
+          }],
+        };
+      }
+      default: {
+        // Check if it's a canvas tool
+        if (name.startsWith("canvas_") || name.startsWith("kanban_")) {
+          return await handleCanvasTool(name, args);
+        }
+        // Check if it's a pipeline visualization tool
+        if (name.startsWith("pipeline_") || name.startsWith("agent_") || name.startsWith("consensus_") || name.endsWith("_gumploop") || name === "full_pipeline_dashboard") {
+          return await handlePipelineTool(name, args);
+        }
         throw new Error(`Unknown tool: ${name}`);
+      }
     }
   } catch (error) {
     return {
@@ -220,5 +319,5 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 export async function startServer(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Gumploop MCP v2.0 running on stdio - Run Forrest Run!");
+  console.error("Gumploop MCP v2.8.0 running on stdio - Run Forrest Run!");
 }

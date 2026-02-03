@@ -18,11 +18,26 @@ export interface I3Workspace {
   focused: boolean;
 }
 
+export interface FeatureProposal {
+  id: string;
+  title: string;
+  description: string;
+  reasoning: string;
+  impact: "high" | "medium" | "low";
+  effort: "high" | "medium" | "low";
+  affectedFiles: string[];
+  proposedBy: AgentType;
+  votes: number;
+  score: number;
+}
+
 export interface PipelineState {
   currentPhase: string | null;
   task: string;
   workDir: string;
   iteration: number;
+  discoveryComplete: boolean;
+  selectedFeature: string | null;
   planningComplete: boolean;
   codingComplete: boolean;
   testingComplete: boolean;
