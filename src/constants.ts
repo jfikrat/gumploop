@@ -23,7 +23,7 @@ export const CLAUDE_PROJECTS_DIR = join(HOME, ".claude", "projects");
 // Terminal & Timeout Configuration
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const TERMINAL = process.env.PIPELINE_TERMINAL || "ghostty";
+export const TERMINAL = process.env.PIPELINE_TERMINAL || "xterm";
 
 // Adaptive timeout strategy
 export const TIMEOUT_BASE = 30 * 60 * 1000;         // 30 minutes base timeout

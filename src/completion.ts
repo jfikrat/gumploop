@@ -309,29 +309,14 @@ export async function waitForClaudeCompletion(
   while (Date.now() < deadline) {
     await Bun.sleep(ACTIVITY_CHECK_INTERVAL);
 
+    // Check session file for ANS marker
+    const sessionComplete = await checkClaudeSessionFile(projectDir, messageStartTime, currentRequestId);
+    if (sessionComplete) {
+      return;
+    }
+
+    // Check if agent is still active (pane activity for timeout extension only)
     try {
-      // Primary: Check session file for ANS marker
-      const sessionComplete = await checkClaudeSessionFile(projectDir, messageStartTime, currentRequestId);
-      if (sessionComplete) {
-        return;
-      }
-
-      // Fallback: Check pane for "Worked for" (legacy detection)
-      const pane = await capturePane(50);
-      const lastLines = pane.split("\n").slice(-20).join("\n");
-
-      if (lastLines.includes("Worked for") ||
-          (lastLines.includes("❯") && !lastLines.includes("⏳") && !lastLines.includes("Running"))) {
-        // Verify stability
-        await Bun.sleep(3000);
-        const newPane = await capturePane(50);
-        const newLastLines = newPane.split("\n").slice(-20).join("\n");
-        if (!newLastLines.includes("⏳") && !newLastLines.includes("Running")) {
-          return;
-        }
-      }
-
-      // Check if agent is still active
       const currentPane = await capturePane(100);
       if (currentPane !== lastPaneContent) {
         lastPaneContent = currentPane;
