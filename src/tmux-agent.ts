@@ -55,7 +55,7 @@ export class TmuxAgent {
       case "gemini":
         return ["gemini", "-m", "gemini-3-flash-preview", "-y"];
       case "codex":
-        return ["codex", "--dangerously-bypass-approvals-and-sandbox"];
+        return ["codex", "-m", "gpt-5.3-codex", "-c", 'model_reasoning_effort="xhigh"', "--dangerously-bypass-approvals-and-sandbox"];
     }
   }
 
