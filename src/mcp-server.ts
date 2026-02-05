@@ -15,6 +15,7 @@ import { mkdirSync, existsSync } from "fs";
 import { loadState, saveState } from "./state";
 import { getProjectDir, getPipelineDir } from "./workdir";
 import { STATE_FILE } from "./constants";
+import { executeResearch, type ResearchDepth } from "./phases/research";
 import { executeDiscovery } from "./phases/discovery";
 import { executePlanning } from "./phases/planning";
 import { executeCoding } from "./phases/coding";
@@ -50,6 +51,8 @@ function getStatus(): string {
   const state = loadState();
   const projectDir = state.workDir;
   const pipelineDir = getPipelineDir(projectDir);
+  // Research files
+  const researchExists = existsSync(`${pipelineDir}/research.md`);
   // Discovery files
   const consensusExists = existsSync(`${pipelineDir}/consensus.md`);
   // Planning files
@@ -74,6 +77,7 @@ function getStatus(): string {
 - Debugging: ${state.debuggingComplete ? "✅ Fixed" : "⏳ Pending"}
 
 ### Pipeline Files
+- research.md: ${researchExists ? "✓ exists" : "✗ missing"}
 - consensus.md: ${consensusExists ? "✓ exists" : "✗ missing"}
 - plan.md: ${planExists ? "✓ exists" : "✗ missing"}
 - review-gemini.md: ${geminiReviewExists ? "✓ exists" : "✗ missing"}
@@ -87,6 +91,30 @@ function getStatus(): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const tools: Tool[] = [
+  {
+    name: "research",
+    description: "Deep research on a topic before coding. Gathers sources, analyzes from multiple perspectives (best practices, modern trends, security), and synthesizes into a comprehensive report.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        question: {
+          type: "string",
+          description: "The research question (e.g., 'JWT authentication best practices', 'WebSocket vs SSE for real-time')",
+        },
+        workDir: {
+          type: "string",
+          description: "Working directory where research files will be saved.",
+        },
+        depth: {
+          type: "string",
+          enum: ["quick", "deep"],
+          description: "Research depth: 'quick' (3 queries) or 'deep' (8 queries). Default: deep",
+          default: "deep",
+        },
+      },
+      required: ["question", "workDir"],
+    },
+  },
   {
     name: "discover",
     description: "Start feature discovery phase. Agents autonomously analyze the codebase and propose new features. Returns prioritized feature list.",
@@ -209,7 +237,7 @@ function parseIterationsArg(args: unknown, defaultValue: number): number {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const server = new Server(
-  { name: "gumploop", version: "2.8.0" },
+  { name: "gumploop", version: "2.9.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -220,6 +248,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     switch (name) {
+      case "research": {
+        const obj = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+        const question = typeof obj.question === "string" ? obj.question : undefined;
+        const workDir = typeof obj.workDir === "string" ? obj.workDir : undefined;
+        const depth = (obj.depth === "quick" || obj.depth === "deep" ? obj.depth : "deep") as ResearchDepth;
+        if (!question) throw new Error("question parameter is required");
+        if (!workDir) throw new Error("workDir parameter is required");
+        const result = await executeResearch(question, depth, workDir);
+        return { content: [{ type: "text", text: result.result }] };
+      }
       case "discover": {
         const obj = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
         const workDir = typeof obj.workDir === "string" ? obj.workDir : undefined;
@@ -319,5 +357,5 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 export async function startServer(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Gumploop MCP v2.8.0 running on stdio - Run Forrest Run!");
+  console.error("Gumploop MCP v2.9.0 running on stdio - Run Forrest Run!");
 }

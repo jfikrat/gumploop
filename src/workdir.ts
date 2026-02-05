@@ -80,6 +80,12 @@ export function getPipelineFiles(projectDir: string) {
     pipelineDir,
     gumploopDir: pipelineDir, // Alias for compatibility
     stateFile: join(pipelineDir, ".state.json"),
+    // Research phase files
+    researchFile: join(pipelineDir, "research.md"),
+    researchSourcesFile: join(pipelineDir, "research-sources.md"),
+    researchClaudeFile: join(pipelineDir, "research-claude.md"),
+    researchGeminiFile: join(pipelineDir, "research-gemini.md"),
+    researchCodexFile: join(pipelineDir, "research-codex.md"),
     // Discovery phase files
     discoveryClaudeFile: join(pipelineDir, "discovery-claude.md"),
     discoveryGeminiFile: join(pipelineDir, "discovery-gemini.md"),
