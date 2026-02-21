@@ -67,11 +67,20 @@ export class TmuxAgent {
 
     const cliArgs = this.getCliArgs();
 
+    // Claude must start in projectDir for correct session file detection
+    // (~/.claude/projects/{projectDir-hash}/*.jsonl).
+    // Gemini and Codex start in gumploopDir so their relative-path file
+    // writes land in .gumploop/ instead of the project root.
+    const startDir =
+      this.agentType === "claude"
+        ? this.projectDir
+        : join(this.projectDir, ".gumploop");
+
     // Spawn terminal with title for i3 identification
     this.terminalProc = spawn([
       TERMINAL, "-title", this.sessionName, "-e", "tmux", "new-session",
       "-s", this.sessionName,
-      "-c", this.projectDir,
+      "-c", startDir,
       ...cliArgs
     ], {
       stdout: "ignore",
