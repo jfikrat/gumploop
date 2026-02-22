@@ -20,6 +20,7 @@ import { executeDiscovery } from "./phases/discovery";
 import { executePlanning } from "./phases/planning";
 import { executeCoding } from "./phases/coding";
 import { executeTesting, executeDebugging } from "./phases/testing";
+import { executeCollab } from "./phases/collab";
 
 // Canvas visualization
 import {
@@ -145,6 +146,10 @@ export const tools: Tool[] = [
           description: "Working directory for the pipeline. Agents will write code here. Defaults to /tmp/collab-mcp/project if not specified.",
         },
         maxIterations: { type: "number", description: "Maximum planning iterations (default: 5)", default: 5 },
+        context: {
+          type: "string",
+          description: "Optional context to seed the plan (e.g., paste synthesis from collab). If omitted, synthesis.md from workDir/.gumploop/ is auto-detected.",
+        },
       },
       required: ["task"],
     },
@@ -190,6 +195,24 @@ export const tools: Tool[] = [
     inputSchema: { type: "object", properties: {} },
   },
   {
+    name: "collab",
+    description: "3 agents independently write proposals/solutions, then cross-review each other's work, then Claude synthesizes everything. Use for brainstorming, design decisions, architecture proposals, or any task benefiting from diverse perspectives.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        prompt: {
+          type: "string",
+          description: "The task or question for all agents to respond to independently.",
+        },
+        workDir: {
+          type: "string",
+          description: "Working directory where collab files will be saved.",
+        },
+      },
+      required: ["prompt", "workDir"],
+    },
+  },
+  {
     name: "canvas_server_start",
     description: "Start WebSocket server for real-time canvas updates. Clients connect via ws://localhost:19800/ws?workDir=/path",
     inputSchema: {
@@ -218,12 +241,13 @@ const allTools: Tool[] = [...tools, ...canvasAllTools];
 // Argument Parsers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function parsePlanArgs(args: unknown): { task: string; workDir?: string; maxIterations: number } {
+function parsePlanArgs(args: unknown): { task: string; workDir?: string; maxIterations: number; context?: string } {
   const obj = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
   return {
     task: typeof obj.task === "string" ? obj.task : "",
     workDir: typeof obj.workDir === "string" ? obj.workDir : undefined,
     maxIterations: typeof obj.maxIterations === "number" ? obj.maxIterations : 5,
+    context: typeof obj.context === "string" ? obj.context : undefined,
   };
 }
 
@@ -266,10 +290,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const result = await executeDiscovery(maxIterations, workDir);
         return { content: [{ type: "text", text: result.result }] };
       }
+      case "collab": {
+        const obj = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+        const prompt = typeof obj.prompt === "string" ? obj.prompt : undefined;
+        const workDir = typeof obj.workDir === "string" ? obj.workDir : undefined;
+        if (!prompt) throw new Error("prompt parameter is required");
+        if (!workDir) throw new Error("workDir parameter is required");
+        const result = await executeCollab(prompt, workDir);
+        return { content: [{ type: "text", text: result.result }] };
+      }
       case "plan": {
-        const { task, workDir, maxIterations } = parsePlanArgs(args);
+        const { task, workDir, maxIterations, context } = parsePlanArgs(args);
         if (!task) throw new Error("task parameter is required");
-        const result = await executePlanning(task, maxIterations, workDir);
+        const result = await executePlanning(task, maxIterations, workDir, context);
         return { content: [{ type: "text", text: result.result }] };
       }
       case "code": {
@@ -312,7 +345,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         stateManager.setOnStateChange((workDir, state) => {
           broadcaster.broadcastToTenant(workDir, state);
         });
-        broadcaster.start();
+        broadcaster.start(port);
         return { content: [{ type: "text", text: `Canvas WebSocket server started on port ${port}` }] };
       }
       case "canvas_server_stop": {

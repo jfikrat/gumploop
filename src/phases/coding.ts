@@ -57,14 +57,14 @@ export async function executeCoding(maxIterations: number): Promise<{ success: b
       let coderPrompt: string;
       if (state.iteration === 1) {
         coderPrompt = `# Instructions
-Read the approved plan in .gumploop/plan.md
+Read the approved plan in ${files.planFile}
 Implement the code according to the plan.
 
 Write clean TypeScript code.
 After implementing, say "Code implemented."`;
       } else {
         coderPrompt = `# Instructions
-Read the code review in .gumploop/code-review.md
+Read the code review in ${files.codeReviewFile}
 Fix the issues mentioned and improve the code.
 
 After fixing, say "Code revised."`;
@@ -78,8 +78,8 @@ After fixing, say "Code revised."`;
       results.push("\n**Step 2: Reviewer reviewing...**");
 
       const reviewerPrompt = `# Instructions
-Review all TypeScript files in the project.
-Write your review to .gumploop/code-review.md
+Review all TypeScript files in ${projectDir}
+Write your review to ${files.codeReviewFile}
 
 Include:
 ## Code Review

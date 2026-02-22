@@ -59,7 +59,10 @@ export async function findLatestCodexSession(messageStartTime: number): Promise<
       }
     }
     return valid[0]?.path || null;
-  } catch { return null; }
+  } catch (err) {
+    console.error(`[codex] findLatestCodexSession failed:`, err);
+    return null;
+  }
 }
 
 /**
@@ -94,7 +97,9 @@ export async function checkCodexCompletion(
         if (msg.includes(`[${ansId}]`)) return true;
       }
     }
-  } catch {}
+  } catch (err) {
+    console.error(`[codex] checkCodexCompletion failed:`, err);
+  }
   return false;
 }
 
@@ -185,7 +190,9 @@ export async function checkGeminiSessionFile(
         }
       }
     }
-  } catch {}
+  } catch (err) {
+    console.error(`[gemini] checkGeminiSessionFile failed:`, err);
+  }
   return false;
 }
 
@@ -289,7 +296,9 @@ export async function checkClaudeSessionFile(
         }
       }
     }
-  } catch {}
+  } catch (err) {
+    console.error(`[claude] checkClaudeSessionFile failed:`, err);
+  }
   return false;
 }
 

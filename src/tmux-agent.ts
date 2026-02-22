@@ -40,7 +40,8 @@ export class TmuxAgent {
 
   constructor(name: string, type: AgentType, projectDir: string) {
     const hash = getWorkDirHash(projectDir);
-    this.sessionName = sanitizeSessionName(`gumploop-${hash}-${type}`);
+    // Use name (not type) so parallel phases with same agentType don't collide
+    this.sessionName = sanitizeSessionName(`gumploop-${hash}-${name}`);
     this.agentType = type;
     this.projectDir = projectDir;
   }
@@ -193,22 +194,34 @@ export class TmuxAgent {
     let deadline = Date.now() + TIMEOUT_BASE;
     let lastPaneContent = "";
     let lastActivityTime = Date.now();
+    let fileOffset = 0; // Cursor for incremental reads — avoids full-file parse every poll
 
     while (Date.now() < deadline) {
       await Bun.sleep(ACTIVITY_CHECK_INTERVAL);
 
-      // Check for completion first
+      // Check for completion (incremental read from last offset)
       if (existsSync(progressFile)) {
         const { readFileSync } = await import("fs");
         const content = readFileSync(progressFile, "utf-8");
-        const lines = content.trim().split("\n").filter(l => l.trim());
-
-        for (const line of lines) {
-          const event = safeJsonParse<{ agent: string; action: string; iteration: number }>(line);
-          if (event && event.agent === agent && event.action === action && event.iteration === iteration) {
-            return;
+        // Handle file recreation (e.g., phase restart deleted the file)
+        if (content.length < fileOffset) fileOffset = 0;
+        if (content.length > fileOffset) {
+          const newContent = content.slice(fileOffset);
+          fileOffset = content.length;
+          const lines = newContent.split("\n").filter(l => l.trim());
+          for (const line of lines) {
+            const event = safeJsonParse<{ agent: string; action: string; iteration: number }>(line);
+            if (event && event.agent === agent && event.action === action && event.iteration === iteration) {
+              return;
+            }
           }
         }
+      }
+
+      // Check if agent session is still alive — throw immediately on crash
+      const sessionAlive = await $`tmux has-session -t ${this.sessionName} 2>/dev/null`.nothrow().quiet();
+      if (sessionAlive.exitCode !== 0) {
+        throw new Error(`Agent '${agent}' crashed: tmux session '${this.sessionName}' no longer exists (waiting for ${action})`);
       }
 
       // Check if agent is still active (pane output changing)

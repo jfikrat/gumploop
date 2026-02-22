@@ -2,7 +2,7 @@
  * Testing and Debugging phases for Gumploop pipeline
  */
 
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, unlinkSync } from "fs";
 import { getPipelineFiles } from "../workdir";
 import { loadState, saveState } from "../state";
 import { TmuxAgent } from "../tmux-agent";
@@ -24,6 +24,9 @@ export async function executeTesting(): Promise<{ success: boolean; result: stri
   state.currentPhase = "testing";
   state.activeSessions = [];
   saveState(state);
+
+  // Clear progress file so stale events from previous runs don't falsely signal completion
+  if (existsSync(files.progressFile)) unlinkSync(files.progressFile);
 
   const results: string[] = [];
   results.push(`**Working Directory:** ${projectDir}\n`);
@@ -183,17 +186,22 @@ After fixing, say "Bugs fixed."`;
       }
     }
 
-    state.activeSessions = [];
-    state.debuggingComplete = fixed;
     results.push(fixed ? "\n **Bugs fixed!**" : "\n **Could not fix all bugs**");
 
-    saveState(state);
+    // Reload fresh state: executeTesting() may have updated testingComplete and others
+    const finalState = loadState();
+    finalState.activeSessions = [];
+    finalState.debuggingComplete = fixed;
+    finalState.currentPhase = null;
+    saveState(finalState);
     return { success: fixed, result: results.join("\n") };
 
   } catch (error) {
-    state.activeSessions = [];
-    state.currentPhase = null;
-    saveState(state);
+    // Reload to avoid overwriting updates made by nested executeTesting() calls
+    const errState = loadState();
+    errState.activeSessions = [];
+    errState.currentPhase = null;
+    saveState(errState);
     throw error;
   }
 }

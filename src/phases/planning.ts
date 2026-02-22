@@ -12,7 +12,8 @@ import { TmuxAgent } from "../tmux-agent";
 export async function executePlanning(
   task: string,
   maxIterations: number,
-  workDir?: string
+  workDir?: string,
+  context?: string
 ): Promise<{ success: boolean; result: string }> {
   // Resolve project directory
   const projectDir = getProjectDir(workDir);
@@ -38,6 +39,14 @@ export async function executePlanning(
 
   const results: string[] = [];
   results.push(`**Working Directory:** ${projectDir}\n`);
+
+  // Auto-detect synthesis context if not explicitly provided
+  let planContext = context;
+  if (!planContext && existsSync(files.synthesisFile)) {
+    planContext = readFileSync(files.synthesisFile, "utf-8");
+    results.push("*Context: auto-loaded from synthesis.md*\n");
+  }
+
   let consensusReached = false;
 
   // Start all agents
@@ -62,6 +71,9 @@ export async function executePlanning(
 
     results.push("All agents started.\n");
 
+    let prevGeminiReview = "";
+    let prevCodexReview = "";
+
     while (!consensusReached && state.iteration < maxIterations) {
       state.iteration++;
       saveState(state);
@@ -76,8 +88,11 @@ export async function executePlanning(
 
       let claudePrompt: string;
       if (state.iteration === 1) {
+        const contextSection = planContext
+          ? `\n\n# Prior Research / Context\nUse the following as background for your plan:\n\n${planContext}`
+          : "";
         claudePrompt = `# Task
-${task}
+${task}${contextSection}
 
 # Iteration Info
 This is iteration ${state.iteration} of ${maxIterations}.
@@ -131,36 +146,35 @@ Revise your plan in ${files.planFile} based on the feedback.
 
       const isLastIteration = state.iteration >= maxIterations;
 
-      const geminiPrompt = `# Instructions
-First, verify ${files.planFile} exists. If not, wait and check again.
+      const deltaGeminiSection = state.iteration > 1 && prevGeminiReview
+        ? `\n## Your Previous Review (Iteration ${state.iteration - 1})\nThese were your concerns last time — check if they have been addressed:\n\`\`\`\n${prevGeminiReview.slice(0, 2000)}\n\`\`\`\nFocus on delta: is this version better? Are your old issues resolved?\n`
+        : "";
 
+      const geminiPrompt = `# Instructions
 Read the plan in ${files.planFile}
 
 Write your review to ${files.reviewGeminiFile}
-
-## CRITICAL REVIEW RULES
+${deltaGeminiSection}
+## Review Rules
 - This is iteration ${state.iteration} of ${maxIterations}
-- You are a STRICT reviewer. Your job is to find problems, not to approve quickly.
-- ${isLastIteration ? "This is the FINAL iteration. You may approve if all major issues are resolved." : "This is NOT the final iteration. You MUST find issues and request revision."}
-- Find AT LEAST 3 specific issues or improvements
-- Be harsh and thorough - lazy reviews waste everyone's time
-- Check: API design, error handling, edge cases, documentation, testability
+- Be honest: if significant issues remain, describe them specifically. If the plan is solid, say so.
+- Do NOT invent issues. Only flag real problems.
+- Check: UX/DX, API design, error handling, edge cases, documentation, testability
 
 ## Review Format
 Write to ${files.reviewGeminiFile}:
 
-## UX/UI Review
+## UX/DX Review
 
-### Issues Found (minimum 3)
-1. [Specific issue with exact problem]
-2. [Another specific issue]
-3. [Another specific issue]
+### Issues Found
+[List real issues with specifics, or write "No significant issues found" if the plan is solid]
 
 ### Suggestions
-- [Concrete improvement suggestion]
+- [Concrete improvement, if any]
 
 ## Status
-${isLastIteration ? "APPROVED (only if all major issues resolved) or NEEDS_REVISION" : "NEEDS_REVISION (you MUST request revision in early iterations)"}
+APPROVED — if the plan adequately addresses the task and your concerns are resolved
+NEEDS_REVISION — if there are specific issues that must be fixed (explain what and why)
 
 ## CRITICAL - COMPLETION SIGNAL
 After writing review, you MUST append this exact JSON line to ${files.progressFile}:
@@ -176,39 +190,37 @@ End your response with END`;
       // Step 3: Codex reviews plan
       results.push("\n**Step 3: Codex reviewing...**");
 
-      const codexPrompt = `# Instructions
-First, verify ${files.planFile} exists. If not, wait and check again.
+      const deltaCodexSection = state.iteration > 1 && prevCodexReview
+        ? `\n## Your Previous Review (Iteration ${state.iteration - 1})\nThese were your technical concerns last time — check if they have been addressed:\n\`\`\`\n${prevCodexReview.slice(0, 2000)}\n\`\`\`\nFocus on delta: is this version technically better? Are your old issues resolved?\n`
+        : "";
 
+      const codexPrompt = `# Instructions
 Read the plan in ${files.planFile}
 
 Write your review to ${files.reviewCodexFile}
-
-## CRITICAL REVIEW RULES
+${deltaCodexSection}
+## Review Rules
 - This is iteration ${state.iteration} of ${maxIterations}
-- You are a STRICT technical reviewer. Find real problems.
-- ${isLastIteration ? "This is the FINAL iteration. You may approve if all technical issues are resolved." : "This is NOT the final iteration. You MUST find technical issues and request revision."}
-- Find AT LEAST 3 specific technical issues
-- Be thorough - check EVERY edge case, error path, and potential bug
-- Think about: memory leaks, race conditions, type safety, error propagation, testability
+- Be honest: only flag real technical problems, not hypothetical ones.
+- Think about: memory leaks, race conditions, type safety, error propagation, testability, security
 
 ## Review Format
 Write to ${files.reviewCodexFile}:
 
 ## Technical Review
 
-### Critical Issues (minimum 3)
-1. [Specific technical issue with code reference]
-2. [Another technical issue]
-3. [Another technical issue]
+### Critical Issues
+[List real technical issues with specifics, or write "No critical issues found" if the plan is solid]
 
 ### Security/Performance Concerns
-- [Any security or performance issues]
+- [Any security or performance issues, if any]
 
 ### Missing Edge Cases
-- [Edge cases not handled]
+- [Edge cases not handled, if any]
 
 ## Status
-${isLastIteration ? "APPROVED (only if all technical issues resolved) or NEEDS_REVISION" : "NEEDS_REVISION (you MUST find issues in early iterations)"}
+APPROVED — if the plan is technically sound and your concerns are resolved
+NEEDS_REVISION — if there are specific technical issues that must be fixed (explain what and why)
 
 ## CRITICAL - COMPLETION SIGNAL
 After writing review, you MUST append this exact JSON line to ${files.progressFile}:
@@ -231,15 +243,27 @@ After writing review, you MUST append this exact JSON line to ${files.progressFi
       const codexApproved = codexReview.includes("APPROVED") && !codexReview.includes("NEEDS_REVISION");
 
       results.push(`\n**Results:**`);
-      results.push(`- Gemini: ${geminiApproved ? "APPROVED" : "NEEDS_REVISION"}`);
-      results.push(`- Codex: ${codexApproved ? "APPROVED" : "NEEDS_REVISION"}`);
+      results.push(`- Gemini: ${geminiApproved ? "APPROVED ✓" : "NEEDS_REVISION"}`);
+      results.push(`- Codex: ${codexApproved ? "APPROVED ✓" : "NEEDS_REVISION"}`);
 
       if (geminiApproved && codexApproved) {
         consensusReached = true;
-        results.push("\n**Consensus reached!**");
+        results.push("\n**Consensus reached! (Both approved)**");
+      } else if (state.iteration >= maxIterations - 1 && (geminiApproved || codexApproved)) {
+        // Progressive threshold: from second-to-last iteration onwards, 1/2 is enough
+        consensusReached = true;
+        const approver = geminiApproved ? "Gemini" : "Codex";
+        results.push(`\n**Progressive consensus: ${approver} approved (1/2 sufficient from iteration ${state.iteration}/${maxIterations})**`);
+      } else if (isLastIteration) {
+        // Final iteration: auto-accept regardless — remaining issues logged above
+        consensusReached = true;
+        results.push("\n**Auto-accepted on final iteration** (see reviewer files for remaining notes)");
       } else {
         results.push("\nContinuing to next iteration...");
       }
+
+      prevGeminiReview = geminiReview;
+      prevCodexReview = codexReview;
     }
 
     // If no consensus, have Claude read and summarize remaining issues
@@ -277,9 +301,7 @@ Include:
     await codex.stop();
     state.activeSessions = [];
 
-    // Always mark planning as complete after max iterations
-    // This allows the user to continue to coding phase even without consensus
-    state.planningComplete = true;
+    state.planningComplete = consensusReached;
 
     saveState(state);
     return { success: consensusReached, result: results.join("\n") };

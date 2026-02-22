@@ -100,5 +100,13 @@ export function getPipelineFiles(projectDir: string) {
     testResultsFile: join(pipelineDir, "test-results.md"),
     bugAnalysisFile: join(pipelineDir, "bug-analysis.md"),
     progressFile: join(pipelineDir, "progress.jsonl"),
+    // Collab phase files
+    draftClaudeFile: join(pipelineDir, "draft-claude.md"),
+    draftGeminiFile: join(pipelineDir, "draft-gemini.md"),
+    draftCodexFile: join(pipelineDir, "draft-codex.md"),
+    crossreviewClaudeFile: join(pipelineDir, "crossreview-claude.md"),
+    crossreviewGeminiFile: join(pipelineDir, "crossreview-gemini.md"),
+    crossreviewCodexFile: join(pipelineDir, "crossreview-codex.md"),
+    synthesisFile: join(pipelineDir, "synthesis.md"),
   };
 }
